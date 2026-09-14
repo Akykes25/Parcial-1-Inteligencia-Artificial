@@ -21,6 +21,12 @@ public class HunterController : MonoBehaviour
     [SerializeField] private float waypointReachDistance = 0.8f;
     [SerializeField] private float gatherReachDistance = 1.2f;
 
+    [Header("Target stability")]
+    [Tooltip("Extra distance allowed before an acquired target is released.")]
+    [SerializeField, Min(0f)] private float targetRetentionMargin = 1.5f;
+    [Tooltip("Time outside the retention radius before returning to Patrol.")]
+    [SerializeField, Min(0f)] private float targetLostGraceDuration = 0.35f;
+
     [Header("Attack and Gather")]
     [SerializeField] private float attackDamage = 34f;
     [SerializeField] private float gatherDuration = 1.6f;
@@ -45,6 +51,7 @@ public class HunterController : MonoBehaviour
     private float tbaRemaining;
     private float interestSpawnTimer;
     private float elapsedGatherTime;
+    private float targetLostTime;
     private int waypointIndex;
     private int attackCount;
     private int gatherCount;
@@ -62,6 +69,7 @@ public class HunterController : MonoBehaviour
     public int GatherCount => gatherCount;
     public int CurrentWaypointIndex => waypointIndex;
     public float VisionRadius => visionRadius;
+    public float AttackRetentionRadius => visionRadius + Mathf.Max(0f, targetRetentionMargin);
 
     private void Awake()
     {
@@ -123,6 +131,11 @@ public class HunterController : MonoBehaviour
 
     private void ChangeState(HunterState nextState)
     {
+        if (stateInitialized && currentState == nextState)
+        {
+            return;
+        }
+
         string previousState = CurrentStateName;
         if (stateInitialized)
         {
@@ -142,10 +155,12 @@ public class HunterController : MonoBehaviour
             case HunterState.Patrol:
                 attackTarget = null;
                 gatherTarget = null;
+                targetLostTime = 0f;
                 SetStateColor(new Color(0.95f, 0.18f, 0.12f));
                 SetAction("Recorriendo waypoints");
                 break;
             case HunterState.Attack:
+                targetLostTime = 0f;
                 SetStateColor(new Color(1f, 0.55f, 0.05f));
                 SetAction("Evaluando objetivo");
                 break;
@@ -178,17 +193,11 @@ public class HunterController : MonoBehaviour
 
         if (TryFindAliveBoidInVision(out BoidAgent aliveBoid))
         {
-            if (IsTBAReady())
-            {
-                attackTarget = aliveBoid;
-                ChangeState(HunterState.Attack);
-                return;
-            }
-
-            SetAction(string.Format(
-                "Patrol: Boid detectado; esperando TBA ({0:0.0}s)",
-                tbaRemaining));
-            velocity = Vector3.zero;
+            // Detectar un enemigo siempre pertenece a Attack. El TBA limita
+            // los golpes, no la capacidad del cazador de fijar y perseguir
+            // un objetivo.
+            attackTarget = aliveBoid;
+            ChangeState(HunterState.Attack);
             return;
         }
 
@@ -213,19 +222,35 @@ public class HunterController : MonoBehaviour
             return;
         }
 
-        if (!IsWithinVision(target))
+        if (!IsWithinAttackRetention(target))
         {
-            ChangeState(HunterState.Patrol);
+            targetLostTime += deltaTime;
+            if (targetLostTime >= targetLostGraceDuration)
+            {
+                ChangeState(HunterState.Patrol);
+                return;
+            }
+
+            SetAction("Attack: recuperando contacto con el objetivo");
+            MoveTowardsTarget(target.transform.position, attackSpeed, 1.1f, deltaTime);
             return;
         }
 
+        targetLostTime = 0f;
         float distance = Vector3.Distance(transform.position, target.transform.position);
         if (distance <= MeleeAttackRadius)
         {
-            SetAction("Attack: golpe cuerpo a cuerpo");
+            StopAndFaceTarget(target.transform.position, deltaTime);
             if (IsTBAReady())
             {
+                SetAction("Attack: golpe cuerpo a cuerpo");
                 PerformAttack(target, "cuerpo a cuerpo");
+            }
+            else
+            {
+                SetAction(string.Format(
+                    "Attack: objetivo cuerpo a cuerpo; TBA {0:0.0}s",
+                    tbaRemaining));
             }
 
             return;
@@ -233,10 +258,17 @@ public class HunterController : MonoBehaviour
 
         if (distance <= RangeAttackRadius)
         {
-            SetAction("Attack: ataque a distancia");
+            StopAndFaceTarget(target.transform.position, deltaTime);
             if (IsTBAReady())
             {
+                SetAction("Attack: ataque a distancia");
                 PerformAttack(target, "a distancia");
+            }
+            else
+            {
+                SetAction(string.Format(
+                    "Attack: objetivo fijado; TBA {0:0.0}s",
+                    tbaRemaining));
             }
 
             return;
@@ -313,11 +345,11 @@ public class HunterController : MonoBehaviour
             visionRadius);
         HashSet<BoidAgent> candidates = new HashSet<BoidAgent>();
         BoidAgent closest = null;
-        float closestDistance = float.MaxValue;
+        float closestSqrDistance = float.MaxValue;
 
         foreach (Collider nearbyCollider in nearbyColliders)
         {
-            BoidAgent boid = nearbyCollider.GetComponent<BoidAgent>();
+            BoidAgent boid = nearbyCollider.GetComponentInParent<BoidAgent>();
             if (boid == null || boid.IsCollected || !candidates.Add(boid))
             {
                 continue;
@@ -328,11 +360,19 @@ public class HunterController : MonoBehaviour
                 continue;
             }
 
-            float distance = Vector3.Distance(transform.position, boid.transform.position);
-            if (distance < closestDistance)
+            float sqrDistance = GetSqrDistanceTo(boid);
+            if (sqrDistance > visionRadius * visionRadius)
+            {
+                // OverlapSphere devuelve colliders que apenas tocan la esfera.
+                // Esta comprobacion hace que adquirir y conservar objetivos
+                // utilicen la posicion del agente de forma consistente.
+                continue;
+            }
+
+            if (sqrDistance < closestSqrDistance)
             {
                 closest = boid;
-                closestDistance = distance;
+                closestSqrDistance = sqrDistance;
             }
         }
 
@@ -349,8 +389,11 @@ public class HunterController : MonoBehaviour
 
         foreach (Collider nearbyCollider in nearbyColliders)
         {
-            BoidAgent boid = nearbyCollider.GetComponent<BoidAgent>();
-            if (boid != null && boid.IsAlive && candidates.Add(boid))
+            BoidAgent boid = nearbyCollider.GetComponentInParent<BoidAgent>();
+            if (boid != null
+                && boid.IsAlive
+                && candidates.Add(boid)
+                && IsWithinRadius(boid, visionRadius))
             {
                 count++;
             }
@@ -359,11 +402,22 @@ public class HunterController : MonoBehaviour
         return count;
     }
 
-    private bool IsWithinVision(BoidAgent target)
+    private bool IsWithinAttackRetention(BoidAgent target)
+    {
+        return IsWithinRadius(target, AttackRetentionRadius);
+    }
+
+    private bool IsWithinRadius(BoidAgent target, float radius)
     {
         return target != null
             && !target.IsCollected
-            && Vector3.Distance(transform.position, target.transform.position) <= visionRadius;
+            && GetSqrDistanceTo(target) <= radius * radius;
+    }
+
+    private float GetSqrDistanceTo(BoidAgent target)
+    {
+        Vector3 offset = target.transform.position - transform.position;
+        return offset.sqrMagnitude;
     }
 
     private void MoveAlongPatrolRoute(float deltaTime)
@@ -428,6 +482,22 @@ public class HunterController : MonoBehaviour
         transform.position = nextPosition;
     }
 
+    private void StopAndFaceTarget(Vector3 targetPosition, float deltaTime)
+    {
+        velocity = Vector3.zero;
+        Vector3 direction = targetPosition - transform.position;
+        direction.y = 0f;
+        if (direction.sqrMagnitude <= 0.0001f)
+        {
+            return;
+        }
+
+        transform.forward = Vector3.Slerp(
+            transform.forward,
+            direction.normalized,
+            8f * deltaTime);
+    }
+
     private void PerformAttack(BoidAgent target, string attackType)
     {
         if (!IsTBAReady() || target == null || !target.IsAlive)
@@ -442,7 +512,12 @@ public class HunterController : MonoBehaviour
             ? "Ataque exitoso cuerpo a cuerpo; TBA reiniciado"
             : "Ataque exitoso a distancia; TBA reiniciado");
         Debug.DrawLine(transform.position, target.transform.position, Color.red, 0.35f);
-        ChangeState(HunterState.Patrol);
+
+        if (!target.IsAlive)
+        {
+            gatherTarget = target;
+            ChangeState(HunterState.Gather);
+        }
     }
 
     private void TrySpawnInterestObject(float deltaTime)
@@ -480,6 +555,8 @@ public class HunterController : MonoBehaviour
     {
         Gizmos.color = new Color(1f, 0.15f, 0.1f, 0.25f);
         Gizmos.DrawWireSphere(transform.position, visionRadius);
+        Gizmos.color = new Color(1f, 0.25f, 0.65f, 0.18f);
+        Gizmos.DrawWireSphere(transform.position, AttackRetentionRadius);
         Gizmos.color = new Color(1f, 0.65f, 0.05f, 0.35f);
         Gizmos.DrawWireSphere(transform.position, RangeAttackRadius);
         Gizmos.color = new Color(1f, 0.05f, 0.05f, 0.5f);
