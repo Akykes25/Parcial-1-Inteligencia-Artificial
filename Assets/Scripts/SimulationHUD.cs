@@ -80,8 +80,14 @@ public class SimulationHUD : MonoBehaviour
         GUI.color = Color.white;
         GUILayout.BeginArea(new Rect(Screen.width - 298f, 28f, 270f, 86f));
         GUILayout.Label("Sensores locales", bodyStyle);
-        GUILayout.Label("Boid vision: limitada a 8m", smallStyle);
-        GUILayout.Label("Hunter vision: limitada a 12m", smallStyle);
+        GUILayout.Label(
+            "Boid vision: limitada a " + GetBoidHunterVisionSummary(),
+            smallStyle);
+        GUILayout.Label(
+            "Hunter vision/retencion: "
+            + hunter.VisionRadius.ToString("0.##") + "m / "
+            + hunter.AttackRetentionRadius.ToString("0.##") + "m",
+            smallStyle);
         GUILayout.Label("Separacion < Alineacion/Cohesion", smallStyle);
         GUILayout.EndArea();
     }
@@ -118,6 +124,38 @@ public class SimulationHUD : MonoBehaviour
         }
 
         return interest.name + " (vida " + interest.Life.ToString("0.0") + ")";
+    }
+
+    private string GetBoidHunterVisionSummary()
+    {
+        float minimumRadius = float.MaxValue;
+        float maximumRadius = float.MinValue;
+        int validBoids = 0;
+
+        foreach (BoidAgent boid in simulation.Boids)
+        {
+            if (boid == null)
+            {
+                continue;
+            }
+
+            minimumRadius = Mathf.Min(minimumRadius, boid.HunterDetectionRadius);
+            maximumRadius = Mathf.Max(maximumRadius, boid.HunterDetectionRadius);
+            validBoids++;
+        }
+
+        if (validBoids == 0)
+        {
+            return "sin Boids";
+        }
+
+        if (Mathf.Approximately(minimumRadius, maximumRadius))
+        {
+            return minimumRadius.ToString("0.##") + "m";
+        }
+
+        return minimumRadius.ToString("0.##")
+            + "-" + maximumRadius.ToString("0.##") + "m";
     }
 
     private void EnsureStyles()

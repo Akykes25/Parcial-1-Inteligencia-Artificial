@@ -60,6 +60,7 @@ public class BoidAgent : MonoBehaviour
     public BoidBehaviourState BehaviourState => behaviourState;
     public string CurrentBehaviour => behaviourState.ToString();
     public InterestObject CurrentInterest => currentInterest;
+    public float HunterDetectionRadius => hunterVisionRadius;
 
     private void Awake()
     {
