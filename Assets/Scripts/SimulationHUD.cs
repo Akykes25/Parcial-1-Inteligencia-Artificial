@@ -50,7 +50,8 @@ public class SimulationHUD : MonoBehaviour
             bodyStyle);
         GUILayout.Label(
             "Objeto interes: " + GetInterestName(hunter.CurrentObjective)
-            + " | Activos: " + simulation.ActiveInterestCount + "/5",
+            + " | Activos: " + simulation.ActiveInterestCount
+            + "/" + hunter.MaxInterestObjects,
             bodyStyle);
         GUILayout.Label(
             "Boids activos: " + activeBoids
@@ -84,9 +85,8 @@ public class SimulationHUD : MonoBehaviour
             "Boid vision: limitada a " + GetBoidHunterVisionSummary(),
             smallStyle);
         GUILayout.Label(
-            "Hunter vision/retencion: "
-            + hunter.VisionRadius.ToString("0.##") + "m / "
-            + hunter.AttackRetentionRadius.ToString("0.##") + "m",
+            "Hunter vision real: "
+            + hunter.VisionRadius.ToString("0.##") + "m",
             smallStyle);
         GUILayout.Label("Separacion < Alineacion/Cohesion", smallStyle);
         GUILayout.EndArea();

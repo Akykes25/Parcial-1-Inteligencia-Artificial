@@ -49,6 +49,10 @@ public class BoidAgent : MonoBehaviour
     private float hitFlashTimer;
     private bool isCollected;
     private InterestObject currentInterest;
+    private readonly PhysicsSensorBuffer sensorBuffer = new PhysicsSensorBuffer();
+    private readonly HashSet<BoidAgent> sensedBoids = new HashSet<BoidAgent>();
+    private readonly HashSet<HunterController> sensedHunters = new HashSet<HunterController>();
+    private readonly HashSet<InterestObject> sensedInterests = new HashSet<InterestObject>();
     private BoidBehaviourState behaviourState = BoidBehaviourState.Flocking;
 
     public Vector3 Velocity => velocity;
@@ -190,26 +194,32 @@ public class BoidAgent : MonoBehaviour
 
     private HunterController DetectHunter()
     {
-        Collider[] nearbyColliders = Physics.OverlapSphere(
-            transform.position,
-            hunterVisionRadius);
-
+        int colliderCount = sensorBuffer.Query(transform.position, hunterVisionRadius);
+        sensedHunters.Clear();
         HunterController closestHunter = null;
-        float closestDistance = float.MaxValue;
+        float closestSqrDistance = float.MaxValue;
+        float visionSqrRadius = hunterVisionRadius * hunterVisionRadius;
 
-        foreach (Collider nearbyCollider in nearbyColliders)
+        for (int i = 0; i < colliderCount; i++)
         {
-            HunterController hunter = nearbyCollider.GetComponent<HunterController>();
-            if (hunter == null)
+            Collider nearbyCollider = sensorBuffer[i];
+            if (nearbyCollider == null)
             {
                 continue;
             }
 
-            float distance = Vector3.Distance(transform.position, hunter.transform.position);
-            if (distance < closestDistance)
+            HunterController hunter = nearbyCollider.GetComponentInParent<HunterController>();
+            if (hunter == null || !sensedHunters.Add(hunter))
+            {
+                continue;
+            }
+
+            Vector3 offset = hunter.transform.position - transform.position;
+            float sqrDistance = offset.sqrMagnitude;
+            if (sqrDistance <= visionSqrRadius && sqrDistance < closestSqrDistance)
             {
                 closestHunter = hunter;
-                closestDistance = distance;
+                closestSqrDistance = sqrDistance;
             }
         }
 
@@ -225,20 +235,24 @@ public class BoidAgent : MonoBehaviour
         alignment = Vector3.zero;
         cohesion = Vector3.zero;
 
-        Collider[] nearbyColliders = Physics.OverlapSphere(
-            transform.position,
-            perceptionRadius);
-        HashSet<BoidAgent> neighbours = new HashSet<BoidAgent>();
+        int colliderCount = sensorBuffer.Query(transform.position, perceptionRadius);
+        sensedBoids.Clear();
 
-        foreach (Collider nearbyCollider in nearbyColliders)
+        for (int i = 0; i < colliderCount; i++)
         {
-            BoidAgent neighbour = nearbyCollider.GetComponent<BoidAgent>();
+            Collider nearbyCollider = sensorBuffer[i];
+            if (nearbyCollider == null)
+            {
+                continue;
+            }
+
+            BoidAgent neighbour = nearbyCollider.GetComponentInParent<BoidAgent>();
             if (neighbour == null || neighbour == this || !neighbour.IsAlive)
             {
                 continue;
             }
 
-            if (!neighbours.Add(neighbour))
+            if (!sensedBoids.Add(neighbour))
             {
                 continue;
             }
@@ -256,39 +270,47 @@ public class BoidAgent : MonoBehaviour
             cohesion += neighbour.transform.position;
         }
 
-        if (neighbours.Count == 0)
+        if (sensedBoids.Count == 0)
         {
             return;
         }
 
-        alignment = SteeringBehaviours.FlatDirection(alignment / neighbours.Count);
-        Vector3 localCentre = cohesion / neighbours.Count;
+        alignment = SteeringBehaviours.FlatDirection(alignment / sensedBoids.Count);
+        Vector3 localCentre = cohesion / sensedBoids.Count;
         cohesion = SteeringBehaviours.Seek(transform.position, localCentre);
         separation = SteeringBehaviours.FlatDirection(separation);
     }
 
     private InterestObject FindNearestInterest()
     {
-        Collider[] nearbyColliders = Physics.OverlapSphere(
-            transform.position,
-            interestSearchRadius);
-
+        int colliderCount = sensorBuffer.Query(transform.position, interestSearchRadius);
+        sensedInterests.Clear();
         InterestObject closestInterest = null;
-        float closestDistance = float.MaxValue;
+        float closestSqrDistance = float.MaxValue;
+        float searchSqrRadius = interestSearchRadius * interestSearchRadius;
 
-        foreach (Collider nearbyCollider in nearbyColliders)
+        for (int i = 0; i < colliderCount; i++)
         {
-            InterestObject interest = nearbyCollider.GetComponent<InterestObject>();
-            if (interest == null || !interest.IsAvailable)
+            Collider nearbyCollider = sensorBuffer[i];
+            if (nearbyCollider == null)
             {
                 continue;
             }
 
-            float distance = Vector3.Distance(transform.position, interest.transform.position);
-            if (distance < closestDistance)
+            InterestObject interest = nearbyCollider.GetComponentInParent<InterestObject>();
+            if (interest == null
+                || !interest.IsAvailable
+                || !sensedInterests.Add(interest))
+            {
+                continue;
+            }
+
+            Vector3 offset = interest.transform.position - transform.position;
+            float sqrDistance = offset.sqrMagnitude;
+            if (sqrDistance <= searchSqrRadius && sqrDistance < closestSqrDistance)
             {
                 closestInterest = interest;
-                closestDistance = distance;
+                closestSqrDistance = sqrDistance;
             }
         }
 
@@ -297,8 +319,8 @@ public class BoidAgent : MonoBehaviour
 
     private void InteractWithInterest(InterestObject interest, float deltaTime)
     {
-        float distance = Vector3.Distance(transform.position, interest.transform.position);
-        if (distance > interestInteractionDistance)
+        Vector3 offset = interest.transform.position - transform.position;
+        if (offset.sqrMagnitude > interestInteractionDistance * interestInteractionDistance)
         {
             return;
         }

@@ -21,17 +21,11 @@ public class HunterController : MonoBehaviour
     [SerializeField] private float waypointReachDistance = 0.8f;
     [SerializeField] private float gatherReachDistance = 1.2f;
 
-    [Header("Target stability")]
-    [Tooltip("Extra distance allowed before an acquired target is released.")]
-    [SerializeField, Min(0f)] private float targetRetentionMargin = 1.5f;
-    [Tooltip("Time outside the retention radius before returning to Patrol.")]
-    [SerializeField, Min(0f)] private float targetLostGraceDuration = 0.35f;
-
     [Header("Attack and Gather")]
     [SerializeField] private float attackDamage = 34f;
     [SerializeField] private float gatherDuration = 1.6f;
     [SerializeField] private float interestSpawnInterval = 5f;
-    [SerializeField] private int maxInterestObjects = 5;
+    [SerializeField, Min(0)] private int maxInterestObjects = 5;
 
     private enum HunterState
     {
@@ -47,11 +41,12 @@ public class HunterController : MonoBehaviour
     private BoidAgent gatherTarget;
     private InterestObject currentObjective;
     private Renderer[] visualRenderers;
+    private readonly PhysicsSensorBuffer sensorBuffer = new PhysicsSensorBuffer();
+    private readonly HashSet<BoidAgent> sensedBoids = new HashSet<BoidAgent>();
     private Vector3 velocity;
     private float tbaRemaining;
     private float interestSpawnTimer;
     private float elapsedGatherTime;
-    private float targetLostTime;
     private int waypointIndex;
     private int attackCount;
     private int gatherCount;
@@ -69,7 +64,7 @@ public class HunterController : MonoBehaviour
     public int GatherCount => gatherCount;
     public int CurrentWaypointIndex => waypointIndex;
     public float VisionRadius => visionRadius;
-    public float AttackRetentionRadius => visionRadius + Mathf.Max(0f, targetRetentionMargin);
+    public int MaxInterestObjects => Mathf.Max(0, maxInterestObjects);
 
     private void Awake()
     {
@@ -80,7 +75,7 @@ public class HunterController : MonoBehaviour
     {
         simulation = owner;
         waypoints = route;
-        tbaRemaining = 1.2f;
+        ResetAttackCooldown();
         interestSpawnTimer = 1.5f;
         waypointIndex = 0;
     }
@@ -155,12 +150,10 @@ public class HunterController : MonoBehaviour
             case HunterState.Patrol:
                 attackTarget = null;
                 gatherTarget = null;
-                targetLostTime = 0f;
                 SetStateColor(new Color(0.95f, 0.18f, 0.12f));
                 SetAction("Recorriendo waypoints");
                 break;
             case HunterState.Attack:
-                targetLostTime = 0f;
                 SetStateColor(new Color(1f, 0.55f, 0.05f));
                 SetAction("Evaluando objetivo");
                 break;
@@ -191,11 +184,17 @@ public class HunterController : MonoBehaviour
             return;
         }
 
+        if (!IsTBAReady())
+        {
+            SetAction(string.Format(
+                "Patrol: esperando TBA {0:0.0}s",
+                tbaRemaining));
+            MoveAlongPatrolRoute(deltaTime);
+            return;
+        }
+
         if (TryFindAliveBoidInVision(out BoidAgent aliveBoid))
         {
-            // Detectar un enemigo siempre pertenece a Attack. El TBA limita
-            // los golpes, no la capacidad del cazador de fijar y perseguir
-            // un objetivo.
             attackTarget = aliveBoid;
             ChangeState(HunterState.Attack);
             return;
@@ -222,23 +221,16 @@ public class HunterController : MonoBehaviour
             return;
         }
 
-        if (!IsWithinAttackRetention(target))
+        if (!IsWithinRadius(target, visionRadius))
         {
-            targetLostTime += deltaTime;
-            if (targetLostTime >= targetLostGraceDuration)
-            {
-                ChangeState(HunterState.Patrol);
-                return;
-            }
-
-            SetAction("Attack: recuperando contacto con el objetivo");
-            MoveTowardsTarget(target.transform.position, attackSpeed, 1.1f, deltaTime);
+            // Perder el rango real de vision invalida Attack de inmediato.
+            // El cooldown conserva su valor porque no hubo un golpe exitoso.
+            ChangeState(HunterState.Patrol);
             return;
         }
 
-        targetLostTime = 0f;
-        float distance = Vector3.Distance(transform.position, target.transform.position);
-        if (distance <= MeleeAttackRadius)
+        float sqrDistance = GetSqrDistanceTo(target);
+        if (sqrDistance <= MeleeAttackRadius * MeleeAttackRadius)
         {
             StopAndFaceTarget(target.transform.position, deltaTime);
             if (IsTBAReady())
@@ -256,7 +248,7 @@ public class HunterController : MonoBehaviour
             return;
         }
 
-        if (distance <= RangeAttackRadius)
+        if (sqrDistance <= RangeAttackRadius * RangeAttackRadius)
         {
             StopAndFaceTarget(target.transform.position, deltaTime);
             if (IsTBAReady())
@@ -326,6 +318,11 @@ public class HunterController : MonoBehaviour
         return tbaRemaining <= 0f;
     }
 
+    private void ResetAttackCooldown()
+    {
+        tbaRemaining = Mathf.Max(0f, TBA);
+    }
+
     private bool TryFindAliveBoidInVision(out BoidAgent result)
     {
         result = FindClosestBoidInVision(false);
@@ -340,17 +337,17 @@ public class HunterController : MonoBehaviour
 
     private BoidAgent FindClosestBoidInVision(bool deadOnly)
     {
-        Collider[] nearbyColliders = Physics.OverlapSphere(
-            transform.position,
-            visionRadius);
-        HashSet<BoidAgent> candidates = new HashSet<BoidAgent>();
+        int colliderCount = sensorBuffer.Query(transform.position, visionRadius);
+        sensedBoids.Clear();
         BoidAgent closest = null;
         float closestSqrDistance = float.MaxValue;
+        float visionSqrRadius = visionRadius * visionRadius;
 
-        foreach (Collider nearbyCollider in nearbyColliders)
+        for (int i = 0; i < colliderCount; i++)
         {
+            Collider nearbyCollider = sensorBuffer[i];
             BoidAgent boid = nearbyCollider.GetComponentInParent<BoidAgent>();
-            if (boid == null || boid.IsCollected || !candidates.Add(boid))
+            if (boid == null || boid.IsCollected || !sensedBoids.Add(boid))
             {
                 continue;
             }
@@ -361,7 +358,7 @@ public class HunterController : MonoBehaviour
             }
 
             float sqrDistance = GetSqrDistanceTo(boid);
-            if (sqrDistance > visionRadius * visionRadius)
+            if (sqrDistance > visionSqrRadius)
             {
                 // OverlapSphere devuelve colliders que apenas tocan la esfera.
                 // Esta comprobacion hace que adquirir y conservar objetivos
@@ -381,18 +378,17 @@ public class HunterController : MonoBehaviour
 
     public int CountAliveBoidsInVision()
     {
-        Collider[] nearbyColliders = Physics.OverlapSphere(
-            transform.position,
-            visionRadius);
-        HashSet<BoidAgent> candidates = new HashSet<BoidAgent>();
+        int colliderCount = sensorBuffer.Query(transform.position, visionRadius);
+        sensedBoids.Clear();
         int count = 0;
 
-        foreach (Collider nearbyCollider in nearbyColliders)
+        for (int i = 0; i < colliderCount; i++)
         {
+            Collider nearbyCollider = sensorBuffer[i];
             BoidAgent boid = nearbyCollider.GetComponentInParent<BoidAgent>();
             if (boid != null
                 && boid.IsAlive
-                && candidates.Add(boid)
+                && sensedBoids.Add(boid)
                 && IsWithinRadius(boid, visionRadius))
             {
                 count++;
@@ -400,11 +396,6 @@ public class HunterController : MonoBehaviour
         }
 
         return count;
-    }
-
-    private bool IsWithinAttackRetention(BoidAgent target)
-    {
-        return IsWithinRadius(target, AttackRetentionRadius);
     }
 
     private bool IsWithinRadius(BoidAgent target, float radius)
@@ -506,7 +497,7 @@ public class HunterController : MonoBehaviour
         }
 
         target.TakeDamage(attackDamage);
-        tbaRemaining = Mathf.Max(0.1f, TBA);
+        ResetAttackCooldown();
         attackCount++;
         SetAction(attackType == "cuerpo a cuerpo"
             ? "Ataque exitoso cuerpo a cuerpo; TBA reiniciado"
@@ -517,7 +508,10 @@ public class HunterController : MonoBehaviour
         {
             gatherTarget = target;
             ChangeState(HunterState.Gather);
+            return;
         }
+
+        ChangeState(HunterState.Patrol);
     }
 
     private void TrySpawnInterestObject(float deltaTime)
@@ -529,7 +523,7 @@ public class HunterController : MonoBehaviour
         }
 
         interestSpawnTimer = interestSpawnInterval;
-        if (simulation == null || simulation.ActiveInterestCount >= maxInterestObjects)
+        if (simulation == null || simulation.ActiveInterestCount >= MaxInterestObjects)
         {
             return;
         }
@@ -555,8 +549,6 @@ public class HunterController : MonoBehaviour
     {
         Gizmos.color = new Color(1f, 0.15f, 0.1f, 0.25f);
         Gizmos.DrawWireSphere(transform.position, visionRadius);
-        Gizmos.color = new Color(1f, 0.25f, 0.65f, 0.18f);
-        Gizmos.DrawWireSphere(transform.position, AttackRetentionRadius);
         Gizmos.color = new Color(1f, 0.65f, 0.05f, 0.35f);
         Gizmos.DrawWireSphere(transform.position, RangeAttackRadius);
         Gizmos.color = new Color(1f, 0.05f, 0.05f, 0.5f);
