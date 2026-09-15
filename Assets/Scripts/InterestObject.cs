@@ -7,12 +7,16 @@ using UnityEngine;
 /// </summary>
 public class InterestObject : MonoBehaviour
 {
+    private static readonly int BaseColorProperty = Shader.PropertyToID("_BaseColor");
+    private static readonly int ColorProperty = Shader.PropertyToID("_Color");
+
     [SerializeField] private float maxLife = 4f;
 
     private float life;
     private float flashTimer;
     private Renderer objectRenderer;
     private Collider objectCollider;
+    private MaterialPropertyBlock colorProperties;
 
     public float Life => life;
     public float MaxLife => maxLife;
@@ -20,8 +24,7 @@ public class InterestObject : MonoBehaviour
 
     private void Awake()
     {
-        objectRenderer = GetComponent<Renderer>();
-        objectCollider = GetComponent<Collider>();
+        CacheComponents();
         life = maxLife;
         IsAvailable = true;
         UpdateVisual();
@@ -29,18 +32,22 @@ public class InterestObject : MonoBehaviour
 
     public void Initialize(float startingLife)
     {
+        Activate(transform.position, startingLife);
+    }
+
+    public void Activate(Vector3 position, float startingLife)
+    {
+        transform.position = position;
         maxLife = Mathf.Max(0.1f, startingLife);
         life = maxLife;
+        flashTimer = 0f;
         IsAvailable = true;
 
-        if (objectRenderer == null)
-        {
-            objectRenderer = GetComponent<Renderer>();
-        }
+        CacheComponents();
 
-        if (objectCollider == null)
+        if (!gameObject.activeSelf)
         {
-            objectCollider = GetComponent<Collider>();
+            gameObject.SetActive(true);
         }
 
         SetVisible(true);
@@ -54,7 +61,7 @@ public class InterestObject : MonoBehaviour
             flashTimer -= Time.deltaTime;
             if (objectRenderer != null && IsAvailable)
             {
-                objectRenderer.material.color = Color.white;
+                SetColor(Color.white);
             }
 
             if (flashTimer <= 0f)
@@ -76,13 +83,12 @@ public class InterestObject : MonoBehaviour
 
         if (objectRenderer != null)
         {
-            objectRenderer.material.color = Color.white;
+            SetColor(Color.white);
         }
 
         if (life <= 0f)
         {
-            IsAvailable = false;
-            SetVisible(false);
+            Deactivate();
         }
         else
         {
@@ -105,6 +111,32 @@ public class InterestObject : MonoBehaviour
         }
     }
 
+    private void CacheComponents()
+    {
+        if (objectRenderer == null)
+        {
+            objectRenderer = GetComponent<Renderer>();
+        }
+
+        if (objectCollider == null)
+        {
+            objectCollider = GetComponent<Collider>();
+        }
+
+        if (colorProperties == null)
+        {
+            colorProperties = new MaterialPropertyBlock();
+        }
+    }
+
+    private void Deactivate()
+    {
+        IsAvailable = false;
+        flashTimer = 0f;
+        SetVisible(false);
+        gameObject.SetActive(false);
+    }
+
     private void UpdateVisual()
     {
         if (objectRenderer == null || !IsAvailable)
@@ -113,9 +145,27 @@ public class InterestObject : MonoBehaviour
         }
 
         float normalizedLife = Mathf.Clamp01(life / Mathf.Max(0.01f, maxLife));
-        objectRenderer.material.color = Color.Lerp(
+        SetColor(Color.Lerp(
             new Color(0.95f, 0.22f, 0.16f),
             new Color(1f, 0.78f, 0.1f),
-            normalizedLife);
+            normalizedLife));
+    }
+
+    private void SetColor(Color color)
+    {
+        if (objectRenderer == null)
+        {
+            return;
+        }
+
+        if (colorProperties == null)
+        {
+            colorProperties = new MaterialPropertyBlock();
+        }
+
+        objectRenderer.GetPropertyBlock(colorProperties);
+        colorProperties.SetColor(BaseColorProperty, color);
+        colorProperties.SetColor(ColorProperty, color);
+        objectRenderer.SetPropertyBlock(colorProperties);
     }
 }

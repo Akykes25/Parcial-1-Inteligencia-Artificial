@@ -30,6 +30,7 @@ public class SimulationBootstrap : MonoBehaviour
     public List<BoidAgent> Boids => boids;
     public List<Transform> Waypoints => waypoints;
     public HunterController Hunter => hunter;
+    public int InterestObjectPoolSize => interestObjects.Count;
     public int ActiveInterestCount
     {
         get
@@ -205,12 +206,18 @@ public class SimulationBootstrap : MonoBehaviour
     public InterestObject SpawnInterestObject()
     {
         Vector3 position = GetRandomInterestPosition();
+        InterestObject reusableInterest = FindReusableInterestObject();
+        if (reusableInterest != null)
+        {
+            reusableInterest.Activate(position, 4f);
+            return reusableInterest;
+        }
+
         GameObject interestObject = CreatePrimitive(
             PrimitiveType.Cylinder,
             "Objeto_Interes",
             position,
-            new Vector3(0.75f, 0.2f, 0.75f),
-            new Color(1f, 0.78f, 0.1f));
+            new Vector3(0.75f, 0.2f, 0.75f));
 
         if (interestContainer != null)
         {
@@ -221,6 +228,27 @@ public class SimulationBootstrap : MonoBehaviour
         interest.Initialize(4f);
         interestObjects.Add(interest);
         return interest;
+    }
+
+    private InterestObject FindReusableInterestObject()
+    {
+        for (int i = 0; i < interestObjects.Count; i++)
+        {
+            InterestObject interest = interestObjects[i];
+            if (interest == null)
+            {
+                interestObjects.RemoveAt(i);
+                i--;
+                continue;
+            }
+
+            if (!interest.IsAvailable)
+            {
+                return interest;
+            }
+        }
+
+        return null;
     }
 
     public Vector3 GetRandomBoidSpawnPosition()
@@ -321,8 +349,7 @@ public class SimulationBootstrap : MonoBehaviour
         PrimitiveType primitiveType,
         string objectName,
         Vector3 position,
-        Vector3 scale,
-        Color color)
+        Vector3 scale)
     {
         GameObject createdObject = GameObject.CreatePrimitive(primitiveType);
         createdObject.name = objectName;
@@ -344,8 +371,6 @@ public class SimulationBootstrap : MonoBehaviour
                     objectRenderer.sharedMaterial = new Material(urpLitShader);
                 }
             }
-
-            objectRenderer.material.color = color;
         }
 
         return createdObject;
