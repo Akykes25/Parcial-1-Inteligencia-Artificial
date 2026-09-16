@@ -1,9 +1,6 @@
 using UnityEngine;
 
-/// <summary>
-/// Simple in-game feedback panel. The colors in the world and this panel make
-/// the current FSM state and the main steering decisions easy to identify.
-/// </summary>
+
 public class SimulationHUD : MonoBehaviour
 {
     private SimulationBootstrap simulation;

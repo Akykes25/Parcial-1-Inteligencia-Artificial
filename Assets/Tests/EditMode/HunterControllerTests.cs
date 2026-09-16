@@ -68,48 +68,61 @@ namespace Parcial1.Tests
         }
 
         [Test]
-        public void Patrol_EntersAttackOnlyWhenTbaIsReadyAndBoidIsVisible()
+        public void Patrol_AcquiresVisibleBoidEvenWhenTbaIsCoolingDown()
         {
             SetPrivateField(hunter, "tbaRemaining", 0.5f);
 
             InvokePrivate(hunter, "UpdatePatrol", 0f);
 
-            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Patrol"));
-            Assert.That(GetProperty<object>(hunter, "CurrentTarget"), Is.Null);
-
-            SetPrivateField(hunter, "tbaRemaining", 0f);
-            InvokePrivate(hunter, "UpdatePatrol", 0f);
-
             Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
             Assert.That(GetProperty<object>(hunter, "CurrentTarget"), Is.SameAs(boid));
+            InvokePrivate(hunter, "UpdateAttack", 0f);
+            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
+            Assert.That(GetProperty<int>(hunter, "AttackCount"), Is.Zero);
         }
 
         [Test]
-        public void SuccessfulAttack_ResetsTbaAndReturnsToStablePatrol()
+        public void SuccessfulAttack_KeepsPursuingVisibleTargetDuringTbaCooldown()
         {
             SetPrivateField(hunter, "tbaRemaining", 0f);
             InvokePrivate(hunter, "UpdatePatrol", 0f);
 
             InvokePrivate(hunter, "UpdateAttack", 0f);
 
-            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Patrol"));
+            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
             Assert.That(GetProperty<int>(hunter, "AttackCount"), Is.EqualTo(1));
             Assert.That(GetProperty<float>(hunter, "TBARemaining"), Is.EqualTo(2f).Within(0.001f));
             Assert.That(GetProperty<float>(boid, "Health"), Is.EqualTo(66f).Within(0.001f));
 
-            for (int i = 0; i < 5; i++)
-            {
-                InvokePrivate(hunter, "UpdatePatrol", 0.1f);
-                Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Patrol"));
-            }
+            InvokePrivate(hunter, "UpdateAttack", 0.1f);
+            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
+            Assert.That(GetProperty<object>(hunter, "CurrentTarget"), Is.SameAs(boid));
+            Assert.That(GetProperty<int>(hunter, "AttackCount"), Is.EqualTo(1));
+
+            SetPublicField(hunter, "RangeAttackRadius", 8.74f);
+            Vector3 positionBeforePursuit = hunterObject.transform.position;
+            boidObject.transform.position = positionBeforePursuit + Vector3.right * 9.5f;
+            Physics.SyncTransforms();
+            InvokePrivate(hunter, "UpdateAttack", 0.1f);
+
+            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
+            Assert.That(GetProperty<object>(hunter, "CurrentTarget"), Is.SameAs(boid));
+            Assert.That(GetProperty<string>(hunter, "CurrentAction"), Is.EqualTo("Attack: persiguiendo al Boid"));
+            Assert.That(hunterObject.transform.position.x, Is.GreaterThan(positionBeforePursuit.x));
+            Assert.That(GetProperty<int>(hunter, "AttackCount"), Is.EqualTo(1));
         }
 
         [Test]
-        public void TargetLeavingRealVision_ReturnsToPatrolWithoutResettingTba()
+        public void TargetLeavingVision_PreservesCooldownAndReacquiresVisibleTarget()
         {
-            SetPrivateField(hunter, "tbaRemaining", 0f);
+            const float cooldown = 1.25f;
+            SetPrivateField(hunter, "tbaRemaining", cooldown);
             InvokePrivate(hunter, "UpdatePatrol", 0f);
             Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
+            Assert.That(GetProperty<object>(hunter, "CurrentTarget"), Is.SameAs(boid));
+
+            InvokePrivate(hunter, "UpdateAttack", 0f);
+            Assert.That(GetProperty<int>(hunter, "AttackCount"), Is.Zero);
 
             boidObject.transform.position = hunterObject.transform.position + Vector3.right * 30f;
             Physics.SyncTransforms();
@@ -117,7 +130,21 @@ namespace Parcial1.Tests
 
             Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Patrol"));
             Assert.That(GetProperty<int>(hunter, "AttackCount"), Is.Zero);
-            Assert.That(GetProperty<float>(hunter, "TBARemaining"), Is.Zero.Within(0.001f));
+            Assert.That(GetProperty<float>(hunter, "TBARemaining"), Is.EqualTo(cooldown).Within(0.001f));
+            Assert.That(GetProperty<object>(hunter, "CurrentTarget"), Is.Null);
+
+            boidObject.transform.position = hunterObject.transform.position + Vector3.right;
+            Physics.SyncTransforms();
+            InvokePrivate(hunter, "UpdatePatrol", 0f);
+
+            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
+            Assert.That(GetProperty<object>(hunter, "CurrentTarget"), Is.SameAs(boid));
+            Assert.That(GetProperty<float>(hunter, "TBARemaining"), Is.EqualTo(cooldown).Within(0.001f));
+
+            InvokePrivate(hunter, "UpdateAttack", 0f);
+            Assert.That(GetProperty<string>(hunter, "CurrentStateName"), Is.EqualTo("Attack"));
+            Assert.That(GetProperty<int>(hunter, "AttackCount"), Is.Zero);
+            Assert.That(GetProperty<float>(hunter, "TBARemaining"), Is.EqualTo(cooldown).Within(0.001f));
         }
 
         [Test]

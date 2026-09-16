@@ -9,11 +9,6 @@ public enum BoidBehaviourState
     Inactive,
     Collected
 }
-
-/// <summary>
-/// Autonomous Boid. It reads nearby colliders as its sensors and calculates
-/// its own movement. There is no manager assigning a steering direction to it.
-/// </summary>
 public class BoidAgent : MonoBehaviour
 {
     [Header("Local sensors")]

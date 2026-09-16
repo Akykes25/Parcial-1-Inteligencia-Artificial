@@ -1,12 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// Connects the scene objects with the simulation logic. The arena, hunter,
-/// boids and HUD are authored in the Unity Hierarchy; this class only finds
-/// those references, initializes them and spawns the temporary interest
-/// objects requested by the hunter.
-/// </summary>
+
 public class SimulationBootstrap : MonoBehaviour
 {
     [Header("Scene references")]
@@ -112,9 +107,7 @@ public class SimulationBootstrap : MonoBehaviour
 
     private void ConfigureSceneCamera()
     {
-        // La iluminacion, la niebla y los materiales pertenecen a la escena.
-        // El bootstrap solo acomoda la camara para que el parcial pueda verse
-        // correctamente y no cambia el aspecto global al entrar en Play.
+
         Camera sceneCamera = Camera.main;
         if (sceneCamera != null)
         {
