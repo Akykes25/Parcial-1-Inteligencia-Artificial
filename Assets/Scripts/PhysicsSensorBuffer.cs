@@ -1,10 +1,6 @@
 using System;
 using UnityEngine;
 
-/// <summary>
-/// Reusable storage for physics perception queries. The buffer grows only
-/// when a query fills it, avoiding a new collider array on every frame.
-/// </summary>
 internal sealed class PhysicsSensorBuffer
 {
     private const int DefaultCapacity = 32;

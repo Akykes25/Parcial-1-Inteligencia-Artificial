@@ -1,10 +1,5 @@
 using UnityEngine;
 
-/// <summary>
-/// Small, reusable steering helpers used by both the Boids and the hunter.
-/// The methods return directions or desired velocities without moving any
-/// GameObject. Each agent decides how to use the result with its own sensors.
-/// </summary>
 public static class SteeringBehaviours
 {
     public static Vector3 Seek(Vector3 position, Vector3 target)

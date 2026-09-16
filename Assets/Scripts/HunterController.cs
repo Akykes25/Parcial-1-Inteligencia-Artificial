@@ -1,11 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// Hunter controlled by a finite state machine. The enum keeps the current
-/// state explicit and the methods below group the Enter, Update and Exit
-/// responsibilities of Patrol, Attack and Gather.
-/// </summary>
+
 public class HunterController : MonoBehaviour
 {
     [Header("Required FSM variables")]
@@ -168,8 +164,6 @@ public class HunterController : MonoBehaviour
 
     private void ExitState(HunterState state)
     {
-        // The method is intentionally explicit so every FSM state has a
-        // complete Enter/Update/Exit lifecycle when the project grows.
     }
 
     private void UpdatePatrol(float deltaTime)
@@ -184,6 +178,13 @@ public class HunterController : MonoBehaviour
             return;
         }
 
+        if (TryFindAliveBoidInVision(out BoidAgent aliveBoid))
+        {
+            attackTarget = aliveBoid;
+            ChangeState(HunterState.Attack);
+            return;
+        }
+
         if (!IsTBAReady())
         {
             SetAction(string.Format(
@@ -193,15 +194,6 @@ public class HunterController : MonoBehaviour
             return;
         }
 
-        if (TryFindAliveBoidInVision(out BoidAgent aliveBoid))
-        {
-            attackTarget = aliveBoid;
-            ChangeState(HunterState.Attack);
-            return;
-        }
-
-        // El recorrido continua solamente cuando Patrol no tiene una
-        // transicion valida a Gather o Attack.
         MoveAlongPatrolRoute(deltaTime);
     }
 
@@ -223,8 +215,7 @@ public class HunterController : MonoBehaviour
 
         if (!IsWithinRadius(target, visionRadius))
         {
-            // Perder el rango real de vision invalida Attack de inmediato.
-            // El cooldown conserva su valor porque no hubo un golpe exitoso.
+
             ChangeState(HunterState.Patrol);
             return;
         }
@@ -360,9 +351,7 @@ public class HunterController : MonoBehaviour
             float sqrDistance = GetSqrDistanceTo(boid);
             if (sqrDistance > visionSqrRadius)
             {
-                // OverlapSphere devuelve colliders que apenas tocan la esfera.
-                // Esta comprobacion hace que adquirir y conservar objetivos
-                // utilicen la posicion del agente de forma consistente.
+
                 continue;
             }
 
@@ -443,9 +432,6 @@ public class HunterController : MonoBehaviour
         {
             return;
         }
-
-        // El recorrido es circular: al terminar el ultimo checkpoint vuelve
-        // al primero y el cazador puede patrullar toda el area continuamente.
         waypointIndex = (waypointIndex + 1) % waypoints.Count;
     }
 
@@ -511,7 +497,6 @@ public class HunterController : MonoBehaviour
             return;
         }
 
-        ChangeState(HunterState.Patrol);
     }
 
     private void TrySpawnInterestObject(float deltaTime)
